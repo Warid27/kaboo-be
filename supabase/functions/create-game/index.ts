@@ -103,8 +103,8 @@ Deno.serve(async (req) => {
         throw secretsError;
     }
 
-    // Add Creator as Player
-    const { error: playerError } = await supabaseClient
+    // Add Creator as Player (Admin)
+    const { data: player, error: playerError } = await supabaseAdmin
       .from('game_players')
       .insert({
         game_id: game.id,
@@ -113,11 +113,23 @@ Deno.serve(async (req) => {
         position: 0,
         is_connected: true
       })
+      .select()
+      .single()
 
-    if (playerError) throw playerError
+    if (playerError) {
+        // Rollback secrets and game
+        await supabaseAdmin.from('game_secrets').delete().eq('game_id', game.id);
+        await supabaseAdmin.from('games').delete().eq('id', game.id);
+        throw playerError;
+    }
 
     return new Response(
-      JSON.stringify({ gameId: game.id, roomCode }),
+      JSON.stringify({ 
+          gameId: game.id, 
+          roomCode,
+          playerId: player.id,
+          playerName: player.player_name
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     )
 

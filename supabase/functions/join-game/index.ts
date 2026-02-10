@@ -27,6 +27,11 @@ Deno.serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } }
     )
 
+    const supabaseAdmin = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    )
+
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
     if (userError || !user) {
       console.error("Auth error:", userError);
@@ -100,8 +105,8 @@ Deno.serve(async (req) => {
     
     const playerName = profile?.username || 'Player';
 
-    // Join
-    const { error: joinError } = await supabaseClient
+    // Join (Admin)
+    const { data: player, error: joinError } = await supabaseAdmin
       .from('game_players')
       .insert({
         game_id: game.id,
@@ -110,11 +115,17 @@ Deno.serve(async (req) => {
         position: position,
         is_connected: true
       })
+      .select()
+      .single()
 
     if (joinError) throw joinError
 
     return new Response(
-      JSON.stringify({ gameId: game.id }),
+      JSON.stringify({ 
+          gameId: game.id,
+          playerId: player.id,
+          playerName: player.player_name
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     )
 
