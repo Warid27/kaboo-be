@@ -61,6 +61,19 @@ A high-performance, secure backend for the Kaboo card game, built with **Supabas
     npx supabase functions deploy
     ```
 
+## CI/CD
+
+This project includes a GitHub Action to automatically deploy Edge Functions when changes are pushed to the `main` or `master` branch.
+
+### Setup
+
+To enable the deployment workflow, you need to add the following **Repository Secrets** in your GitHub repository settings (`Settings` > `Secrets and variables` > `Actions`):
+
+*   `SUPABASE_ACCESS_TOKEN`: Your Supabase Personal Access Token. You can generate one [here](https://supabase.com/dashboard/account/tokens).
+*   `SUPABASE_PROJECT_ID`: The Reference ID of your Supabase project (e.g., `abcdefghijklm`).
+
+The workflow file is located at `.github/workflows/deploy-supabase-functions.yml`.
+
 ## Development
 
 ### Running Tests
