@@ -1,3 +1,4 @@
+// deno-lint-ignore no-import-prefix
 import { createClient } from "jsr:@supabase/supabase-js@^2.39.0"
 import { corsHeaders } from "../_shared/cors.ts"
 import { sanitizeState } from "../_shared/game-rules.ts"
@@ -67,7 +68,26 @@ Deno.serve(async (req) => {
 
     // 4. Validate User is in Game
     // We can check if user.id is in currentState.players
-    if (!currentState.players[user.id]) throw new Error('You are not in this game')
+    if (!currentState.players || !currentState.players[user.id]) {
+        // Fallback: Check if game is waiting (lobby) and just return basic state
+        // Or check DB for player membership if state is empty
+        const { data: playerCheck } = await supabaseClient
+            .from('game_players')
+            .select('id')
+            .eq('game_id', gameId)
+            .eq('user_id', user.id)
+            .single();
+            
+        if (!playerCheck) throw new Error('You are not in this game');
+        
+        // If state is empty (new game), return empty structure
+        if (!currentState.players) {
+            return new Response(
+                JSON.stringify({ game_state: { players: {} } }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+            )
+        }
+    }
 
     // 5. Return Sanitized State
     const safeState = sanitizeState(currentState, user.id);
