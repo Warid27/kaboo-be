@@ -1,17 +1,28 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "jsr:@supabase/supabase-js@^2.39.0"
 import { corsHeaders } from "../_shared/cors.ts"
 
-serve(async (req) => {
+console.log("Create Game Function Loaded");
+
+Deno.serve(async (req) => {
+  // Handle CORS Preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      console.error("Missing Authorization header");
+      return new Response(
+        JSON.stringify({ error: 'Missing Authorization header' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
+      )
+    }
+
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+      { global: { headers: { Authorization: authHeader } } }
     )
 
     const supabaseAdmin = createClient(
@@ -20,7 +31,13 @@ serve(async (req) => {
     )
 
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
-    if (userError || !user) throw new Error('Unauthorized')
+    if (userError || !user) {
+      console.error("Auth error:", userError);
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized', details: userError }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
+      )
+    }
 
     // Generate Room Code (4 chars)
     const roomCode = Math.random().toString(36).substring(2, 6).toUpperCase();
@@ -47,8 +64,7 @@ serve(async (req) => {
       })
 
     if (secretsError) {
-        // Rollback game creation? 
-        // For now just throw, but ideally we should delete the game.
+        // Rollback game creation
         await supabaseAdmin.from('games').delete().eq('id', game.id);
         throw secretsError;
     }
@@ -81,6 +97,7 @@ serve(async (req) => {
     )
 
   } catch (error) {
+    console.error("Function error:", error);
     return new Response(
       JSON.stringify({ error: (error as Error).message }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
