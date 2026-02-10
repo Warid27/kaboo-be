@@ -1,4 +1,4 @@
-import { createClient } from "jsr:@supabase/supabase-js@^2.39.0"
+import { createClient } from "@supabase/supabase-js"
 import { corsHeaders } from "../_shared/cors.ts"
 
 console.log("Create Game Function Loaded");

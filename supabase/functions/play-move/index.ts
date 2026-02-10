@@ -1,19 +1,28 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "jsr:@supabase/supabase-js@^2.39.0"
 import { corsHeaders } from "../_shared/cors.ts"
 import { processMove, sanitizeState } from "../_shared/game-rules.ts"
 import { GameAction, GameState } from "../_shared/types.ts"
 
-serve(async (req) => {
+console.log("Play Move Function Loaded");
+
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: 'Missing Authorization header' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
+      )
+    }
+
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+      { global: { headers: { Authorization: authHeader } } }
     )
 
     const supabaseAdmin = createClient(
@@ -23,7 +32,13 @@ serve(async (req) => {
 
     // 1. Auth Check
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
-    if (userError || !user) throw new Error('Unauthorized')
+    if (userError || !user) {
+      console.error("Auth error:", userError);
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized', details: userError }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
+      )
+    }
 
     // 2. Parse Body
     const { gameId, action } = await req.json()
@@ -88,6 +103,7 @@ serve(async (req) => {
     )
 
   } catch (error) {
+    console.error("Play Move error:", error);
     return new Response(
       JSON.stringify({ error: (error as Error).message }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
