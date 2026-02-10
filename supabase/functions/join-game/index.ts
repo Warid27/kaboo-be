@@ -1,4 +1,5 @@
-import { createClient } from "@supabase/supabase-js"
+// deno-lint-ignore-file no-import-prefix
+import { createClient } from "jsr:@supabase/supabase-js@2"
 import { corsHeaders } from "../_shared/cors.ts"
 
 console.log("Join Game Function Loaded");
@@ -70,12 +71,32 @@ Deno.serve(async (req) => {
     
     if (position >= 4) throw new Error('Game is full');
 
-    // Fetch Profile
-    const { data: profile } = await supabaseClient
+    // Ensure Profile Exists
+    let { data: profile } = await supabaseClient
       .from('profiles')
       .select('username')
       .eq('id', user.id)
       .single();
+    
+    if (!profile) {
+        console.log("Profile missing, creating default profile for:", user.id);
+        const username = user.email?.split('@')[0] || `Player_${Math.random().toString(36).substring(2, 6)}`;
+        
+        const { data: newProfile, error: profileError } = await supabaseClient
+            .from('profiles')
+            .insert({
+                id: user.id,
+                username: username
+            })
+            .select()
+            .single();
+            
+        if (profileError) {
+            console.error("Failed to create profile:", profileError);
+            throw new Error("Failed to create user profile");
+        }
+        profile = newProfile;
+    }
     
     const playerName = profile?.username || 'Player';
 

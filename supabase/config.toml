@@ -365,6 +365,21 @@ inspector_port = 8083
 # The Deno major version to use.
 deno_version = 2
 
+[functions.create-game]
+verify_jwt = false
+
+[functions.join-game]
+verify_jwt = false
+
+[functions.start-game]
+verify_jwt = false
+
+[functions.play-move]
+verify_jwt = false
+
+[functions.get-game-state]
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
