@@ -25,7 +25,12 @@ Deno.serve(async (req) => {
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: authHeader } } }
+      { 
+        global: { headers: { Authorization: authHeader } },
+        auth: {
+          persistSession: false // Required for Edge Functions to use the Authorization header correctly
+        }
+      }
     )
 
     const supabaseAdmin = createClient(
@@ -33,7 +38,7 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(authHeader.replace('Bearer ', ''))
     
     if (userError || !user) {
       console.error("Auth error details:", userError);
@@ -42,6 +47,18 @@ Deno.serve(async (req) => {
         JSON.stringify({ error: 'Unauthorized', details: userError }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
       )
+    }
+
+    // Parse Request Body for Player Name
+    let reqPlayerName = 'Host';
+    try {
+        const text = await req.text();
+        if (text) {
+             const body = JSON.parse(text);
+             if (body.playerName) reqPlayerName = body.playerName;
+        }
+    } catch (e) {
+        console.error("Body parsing error:", e);
     }
 
     // Generate Room Code (4 chars)
@@ -56,11 +73,12 @@ Deno.serve(async (req) => {
     
     if (!profile) {
         console.log("Profile missing, creating default profile for:", user.id);
-        const username = user.email?.split('@')[0] || `Player_${Math.random().toString(36).substring(2, 6)}`;
+        const username = reqPlayerName !== 'Host' ? reqPlayerName : (user.email?.split('@')[0] || `Player_${Math.random().toString(36).substring(2, 6)}`);
         
-        const { data: newProfile, error: profileError } = await supabaseClient
+        // Use Admin client to create profile for anonymous users to bypass potential RLS issues
+        const { data: newProfile, error: profileError } = await supabaseAdmin
             .from('profiles')
-            .insert({
+            .upsert({
                 id: user.id,
                 username: username
             })
@@ -69,12 +87,13 @@ Deno.serve(async (req) => {
             
         if (profileError) {
             console.error("Failed to create profile:", profileError);
-            throw new Error("Failed to create user profile");
+            // Don't fail the game creation if profile creation fails, just fallback
+        } else {
+            profile = newProfile;
         }
-        profile = newProfile;
     }
 
-    const playerName = profile?.username || 'Host';
+    const playerName = reqPlayerName !== 'Host' ? reqPlayerName : (profile?.username || 'Host');
 
     // Create Game
     const { data: game, error: gameError } = await supabaseClient
@@ -90,11 +109,37 @@ Deno.serve(async (req) => {
     if (gameError) throw gameError
 
     // Create Game Secrets (Admin)
+    const initialState = {
+      roomCode: roomCode,
+      phase: 'lobby',
+      players: {
+        [user.id]: {
+          id: user.id,
+          name: playerName,
+          isConnected: true,
+          isReady: false,
+          cards: [],
+          score: 0,
+          kabooCalled: false
+        }
+      },
+      playerOrder: [user.id],
+      deck: [],
+      discardPile: [],
+      currentTurnUserId: null,
+      turnPhase: 'draw',
+      drawnCard: null,
+      pendingEffect: null,
+      kabooCallerId: null,
+      turnsLeftAfterKaboo: null,
+      lastAction: 'Game created'
+    };
+
     const { error: secretsError } = await supabaseAdmin
       .from('game_secrets')
       .insert({
         game_id: game.id,
-        game_state: {}
+        game_state: initialState
       })
 
     if (secretsError) {

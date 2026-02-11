@@ -1,5 +1,5 @@
 // deno-lint-ignore no-import-prefix
-import { createClient } from "jsr:@supabase/supabase-js@^2.39.0"
+import { createClient } from "jsr:@supabase/supabase-js@2"
 import { corsHeaders } from "../_shared/cors.ts"
 import { sanitizeState } from "../_shared/game-rules.ts"
 import { GameState } from "../_shared/types.ts"
@@ -23,7 +23,12 @@ Deno.serve(async (req) => {
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: authHeader } } }
+      { 
+        global: { headers: { Authorization: authHeader } },
+        auth: {
+          persistSession: false
+        }
+      }
     )
 
     const supabaseAdmin = createClient(
@@ -32,7 +37,7 @@ Deno.serve(async (req) => {
     )
 
     // 1. Auth Check
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(authHeader.replace('Bearer ', ''))
     if (userError || !user) {
       console.error("Auth error:", userError);
       return new Response(
@@ -65,6 +70,11 @@ Deno.serve(async (req) => {
     if (fetchError || !secretData) throw new Error('Game not found')
 
     const currentState = secretData.game_state as GameState
+
+    // Robustness: Ensure playerOrder exists
+    if (!currentState.playerOrder && currentState.players) {
+        currentState.playerOrder = Object.keys(currentState.players);
+    }
 
     // 4. Validate User is in Game
     // We can check if user.id is in currentState.players

@@ -380,6 +380,15 @@ verify_jwt = false
 [functions.get-game-state]
 verify_jwt = false
 
+[functions.toggle-ready]
+verify_jwt = false
+
+[functions.leave-game]
+verify_jwt = false
+
+[functions.kick-player]
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

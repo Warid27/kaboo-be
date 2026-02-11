@@ -77,6 +77,7 @@ export const initializeGame = (playerIds: string[], roomCode: string): GameState
       id: pid,
       name: 'Player ' + pid.substring(0, 4), // Placeholder
       isConnected: true,
+      isReady: false,
       cards: hand,
       score: 0,
       kabooCalled: false
@@ -94,7 +95,7 @@ export const initializeGame = (playerIds: string[], roomCode: string): GameState
 
     return {
       roomCode,
-      phase: 'playing', // Skip 'dealing' for simplicity in v1
+      phase: 'initial_look', // Start in initial_look phase
       players,
       playerOrder,
       deck,
@@ -454,10 +455,33 @@ const endTurn = (state: GameState): GameState => {
     return state;
 };
 
+export const handleReadyToPlay = (state: GameState, userId: string): GameState => {
+    if (state.phase !== 'initial_look') throw new Error("Not in initial_look phase");
+    
+    const player = state.players[userId];
+    if (!player) throw new Error("Player not found");
+    
+    player.isReady = true;
+    state.lastAction = `${player.name} is ready`;
+
+    // Check if all players are ready
+    const allReady = state.playerOrder.every(pid => state.players[pid].isReady);
+    
+    if (allReady) {
+        state.phase = 'playing';
+        state.turnPhase = 'draw';
+        state.lastAction = "All players ready! Game started.";
+    }
+    
+    return state;
+};
+
 export const processMove = (state: GameState, action: GameAction, userId: string): { state: GameState, result?: any } => {
     switch (action.type) {
         case 'START_GAME':
              throw new Error("Use start-game function");
+        case 'READY_TO_PLAY':
+             return { state: handleReadyToPlay(state, userId) };
         case 'DRAW_FROM_DECK':
              return { state: drawFromDeck(state, userId) };
         case 'DRAW_FROM_DISCARD':
@@ -493,7 +517,12 @@ export const sanitizeState = (state: GameState, viewingPlayerId: string): GameSt
     // Mask Players Cards
     for (const pid in safeState.players) {
         const player = safeState.players[pid];
-        player.cards = player.cards.map((card: Card) => {
+        player.cards = player.cards.map((card: Card, index: number) => {
+            // Special Peek Rule: Allow peeking at first 2 cards during peeking phase
+            if (state.phase === 'initial_look' && pid === viewingPlayerId && (index === 0 || index === 1)) {
+                return card;
+            }
+
             if (card.isFaceUp) return card; 
             return { ...card, value: 0, suit: 'hearts', rank: 'A', isFaceUp: false };
         });

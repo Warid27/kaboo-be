@@ -14,7 +14,9 @@ export interface Card {
 export interface PlayerState {
   id: string; // User ID
   name: string;
+  isHost?: boolean;
   isConnected: boolean;
+  isReady?: boolean; // Track if player is ready (e.g. finished peeking)
   cards: Card[]; // The cards in front of the player
   score: number; // Total score from previous rounds
   kabooCalled: boolean;
@@ -22,7 +24,7 @@ export interface PlayerState {
 
 export interface GameState {
   roomCode: string;
-  phase: 'lobby' | 'dealing' | 'playing' | 'scoring' | 'finished';
+  phase: 'lobby' | 'dealing' | 'initial_look' | 'playing' | 'scoring' | 'finished';
   
   // Players map (key: userId)
   players: Record<string, PlayerState>;
@@ -50,6 +52,7 @@ export interface GameState {
 
 export type GameAction =
   | { type: 'START_GAME' }
+  | { type: 'READY_TO_PLAY' } // Signal finished peeking
   | { type: 'DRAW_FROM_DECK' }
   | { type: 'DRAW_FROM_DISCARD' }
   | { type: 'SWAP_WITH_OWN', cardIndex: number } // Swap drawn card with own card

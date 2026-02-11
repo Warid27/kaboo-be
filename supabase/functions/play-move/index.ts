@@ -1,4 +1,4 @@
-import { createClient } from "jsr:@supabase/supabase-js@^2.39.0"
+import { createClient } from "jsr:@supabase/supabase-js@2"
 import { corsHeaders } from "../_shared/cors.ts"
 import { processMove, sanitizeState } from "../_shared/game-rules.ts"
 import { GameAction, GameState } from "../_shared/types.ts"
@@ -22,7 +22,12 @@ Deno.serve(async (req) => {
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: authHeader } } }
+      { 
+        global: { headers: { Authorization: authHeader } },
+        auth: {
+          persistSession: false
+        }
+      }
     )
 
     const supabaseAdmin = createClient(
@@ -31,7 +36,7 @@ Deno.serve(async (req) => {
     )
 
     // 1. Auth Check
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(authHeader.replace('Bearer ', ''))
     if (userError || !user) {
       console.error("Auth error:", userError);
       return new Response(
@@ -41,7 +46,16 @@ Deno.serve(async (req) => {
     }
 
     // 2. Parse Body
-    const { gameId, action } = await req.json()
+    let gameId, action;
+    try {
+        const text = await req.text();
+        const body = JSON.parse(text);
+        gameId = body.gameId;
+        action = body.action;
+    } catch (e) {
+        throw new Error('Invalid request body');
+    }
+
     if (!gameId || !action) throw new Error('Missing gameId or action')
 
     // 3. Fetch Game Status & State
@@ -87,8 +101,8 @@ Deno.serve(async (req) => {
 
     if (updateSecretError) throw updateSecretError
 
-    // Update Game timestamp (User)
-    const { error: updateGameError } = await supabaseClient
+    // Update Game timestamp (User or Admin? Admin to bypass RLS)
+    const { error: updateGameError } = await supabaseAdmin
       .from('games')
       .update({
         updated_at: new Date().toISOString()

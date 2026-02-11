@@ -1,4 +1,5 @@
 // deno-lint-ignore-file no-import-prefix
+// deno-lint-ignore-file
 import { createClient } from "jsr:@supabase/supabase-js@2"
 import { corsHeaders } from "../_shared/cors.ts"
 
@@ -18,13 +19,29 @@ Deno.serve(async (req) => {
       )
     }
 
-    const { roomCode } = await req.json()
+    // Parse Body
+    let roomCode, reqPlayerName;
+    try {
+        const text = await req.text();
+        const body = JSON.parse(text);
+        roomCode = body.roomCode;
+        reqPlayerName = body.playerName;
+    // deno-lint-ignore no-unused-vars
+    } catch (e) {
+        throw new Error('Invalid request body');
+    }
+
     if (!roomCode) throw new Error('Room code required')
 
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { global: { headers: { Authorization: authHeader } } }
+      { 
+        global: { headers: { Authorization: authHeader } },
+        auth: {
+          persistSession: false
+        }
+      }
     )
 
     const supabaseAdmin = createClient(
@@ -32,7 +49,7 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(authHeader.replace('Bearer ', ''))
     if (userError || !user) {
       console.error("Auth error:", userError);
       return new Response(
@@ -103,7 +120,7 @@ Deno.serve(async (req) => {
         profile = newProfile;
     }
     
-    const playerName = profile?.username || 'Player';
+    const playerName = reqPlayerName || profile?.username || 'Player';
 
     // Join (Admin)
     const { data: player, error: joinError } = await supabaseAdmin
@@ -119,6 +136,46 @@ Deno.serve(async (req) => {
       .single()
 
     if (joinError) throw joinError
+
+    // Update Game Secrets to include new player
+    try {
+      const { data: secretData } = await supabaseAdmin
+        .from('game_secrets')
+        .select('game_state')
+        .eq('game_id', game.id)
+        .single();
+
+      if (secretData && secretData.game_state) {
+        const gameState = secretData.game_state;
+        
+        // Add player to state
+        if (!gameState.players) gameState.players = {};
+        gameState.players[user.id] = {
+            id: user.id,
+            name: playerName,
+            isConnected: true,
+            isReady: false,
+            cards: [],
+            score: 0,
+            kabooCalled: false
+        };
+        
+        // Add to playerOrder
+        if (!gameState.playerOrder) gameState.playerOrder = [];
+        if (!gameState.playerOrder.includes(user.id)) {
+            gameState.playerOrder.push(user.id);
+        }
+        
+        // Save back
+        await supabaseAdmin
+            .from('game_secrets')
+            .update({ game_state: gameState })
+            .eq('game_id', game.id);
+      }
+    } catch (e) {
+      console.error("Failed to update game state:", e);
+      // Non-fatal, but syncing will be delayed until next move
+    }
 
     return new Response(
       JSON.stringify({ 
