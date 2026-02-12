@@ -5,7 +5,7 @@ import { corsHeaders } from "../_shared/cors.ts"
 
 console.log("Join Game Function Loaded");
 
-Deno.serve(async (req) => {
+export const handler = async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -33,23 +33,13 @@ Deno.serve(async (req) => {
 
     if (!roomCode) throw new Error('Room code required')
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { 
-        global: { headers: { Authorization: authHeader } },
-        auth: {
-          persistSession: false
-        }
-      }
-    )
-
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(authHeader.replace('Bearer ', ''))
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token)
     if (userError || !user) {
       console.error("Auth error:", userError);
       return new Response(
@@ -59,7 +49,7 @@ Deno.serve(async (req) => {
     }
 
     // Find Game
-    const { data: game, error: gameError } = await supabaseClient
+    const { data: game, error: gameError } = await supabaseAdmin
       .from('games')
       .select('id, status')
       .eq('room_code', roomCode.toUpperCase())
@@ -69,7 +59,7 @@ Deno.serve(async (req) => {
     if (game.status !== 'waiting') throw new Error('Game already started')
 
     // Check if user already joined
-    const { data: existingPlayer } = await supabaseClient
+    const { data: existingPlayer } = await supabaseAdmin
       .from('game_players')
       .select('id')
       .eq('game_id', game.id)
@@ -84,17 +74,26 @@ Deno.serve(async (req) => {
     }
 
     // Get current player count for position
-    const { count } = await supabaseClient
+    const { count } = await supabaseAdmin
       .from('game_players')
       .select('*', { count: 'exact', head: true })
       .eq('game_id', game.id)
 
     const position = count || 0;
     
-    if (position >= 4) throw new Error('Game is full');
+    // Fetch settings to check limit
+    const { data: secretDataForLimit } = await supabaseAdmin
+        .from('game_secrets')
+        .select('game_state')
+        .eq('game_id', game.id)
+        .single();
+    
+    const maxPlayers = secretDataForLimit?.game_state?.settings?.numPlayers || 4;
+    
+    if (position >= maxPlayers) throw new Error('Game is full');
 
     // Ensure Profile Exists
-    let { data: profile } = await supabaseClient
+    let { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('username')
       .eq('id', user.id)
@@ -104,7 +103,7 @@ Deno.serve(async (req) => {
         console.log("Profile missing, creating default profile for:", user.id);
         const username = user.email?.split('@')[0] || `Player_${Math.random().toString(36).substring(2, 6)}`;
         
-        const { data: newProfile, error: profileError } = await supabaseClient
+        const { data: newProfile, error: profileError } = await supabaseAdmin
             .from('profiles')
             .insert({
                 id: user.id,
@@ -171,6 +170,12 @@ Deno.serve(async (req) => {
             .from('game_secrets')
             .update({ game_state: gameState })
             .eq('game_id', game.id);
+
+        // Trigger Realtime Update for all players
+        await supabaseAdmin
+            .from('games')
+            .update({ updated_at: new Date().toISOString() })
+            .eq('id', game.id);
       }
     } catch (e) {
       console.error("Failed to update game state:", e);
@@ -193,4 +198,8 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
     )
   }
-})
+};
+
+if (import.meta.main) {
+  Deno.serve(handler);
+}

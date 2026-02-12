@@ -11,8 +11,8 @@ Deno.test("Full Game Simulation", () => {
     const roomCode = "TEST";
 
     // 1. Initialize
-    let state = initializeGame(playerIds, roomCode);
-    assertEquals(state.phase, 'playing');
+    let state = initializeGame(playerIds, roomCode, {});
+    assertEquals(state.phase, 'initial_look');
     assertEquals(state.playerOrder.length, 3);
     
     // Determine dynamic order
@@ -22,6 +22,12 @@ Deno.test("Full Game Simulation", () => {
     const u1 = order[0];
     const u2 = order[1];
     const u3 = order[2];
+
+    // Mark players as ready to move to 'playing' phase
+    state = processMove(state, { type: 'READY_TO_PLAY' }, u1).state;
+    state = processMove(state, { type: 'READY_TO_PLAY' }, u2).state;
+    state = processMove(state, { type: 'READY_TO_PLAY' }, u3).state;
+    assertEquals(state.phase, 'playing');
     
     // Verify initial turn
     assertEquals(state.currentTurnUserId, u1);
@@ -34,7 +40,7 @@ Deno.test("Full Game Simulation", () => {
     console.log(`\n--- ${u1} Turn: Draw from Deck ---`);
     // Force Safe Card for U1
     state.deck[0] = { 
-        id: "safe-u1", suit: 'CLUBS', rank: '4', value: 4, isFaceUp: false, source: 'deck' 
+        id: "safe-u1", suit: 'clubs', rank: '4', value: 4, faceUp: false, source: 'deck' 
     };
 
     let result = processMove(state, { type: 'DRAW_FROM_DECK' }, u1);
@@ -75,7 +81,7 @@ Deno.test("Full Game Simulation", () => {
     // 5. U3 Turn: Draw and Play Effect (Mocking a 7/8 for PEEK_OWN)
     console.log(`\n--- ${u3} Turn: Effect (Mocked 7) ---`);
     state.deck[0] = { 
-        id: "mock-7", suit: 'HEARTS', rank: '7', value: 7, isFaceUp: false, source: 'deck' 
+        id: "mock-7", suit: 'hearts', rank: '7', value: 7, faceUp: false, source: 'deck' 
     };
     
     result = processMove(state, { type: 'DRAW_FROM_DECK' }, u3);
@@ -112,9 +118,9 @@ Deno.test("Full Game Simulation", () => {
     
     // 7. U2 Plays final turn
     console.log(`--- ${u2} Final Turn ---`);
-    // Force a safe card (e.g. 2 of DIAMONDS) to ensure no effect triggers
+    // Force a safe card (e.g. 2 of diamonds) to ensure no effect triggers
     state.deck[0] = { 
-        id: "safe-card-1", suit: 'DIAMONDS', rank: '2', value: 2, isFaceUp: false, source: 'deck' 
+        id: "safe-card-1", suit: 'diamonds', rank: '2', value: 2, faceUp: false, source: 'deck' 
     };
     
     processMove(state, { type: 'DRAW_FROM_DECK' }, u2);
@@ -129,7 +135,7 @@ Deno.test("Full Game Simulation", () => {
     console.log(`--- ${u3} Final Turn ---`);
     // Force a safe card
     state.deck[0] = { 
-        id: "safe-card-2", suit: 'DIAMONDS', rank: '3', value: 3, isFaceUp: false, source: 'deck' 
+        id: "safe-card-2", suit: 'diamonds', rank: '3', value: 3, faceUp: false, source: 'deck' 
     };
     
     processMove(state, { type: 'DRAW_FROM_DECK' }, u3);

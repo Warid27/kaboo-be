@@ -19,24 +19,14 @@ Deno.serve(async (req) => {
       )
     }
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { 
-        global: { headers: { Authorization: authHeader } },
-        auth: {
-          persistSession: false
-        }
-      }
-    )
-
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
     // 1. Auth Check
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(authHeader.replace('Bearer ', ''))
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token)
     if (userError || !user) {
       console.error("Auth error:", userError);
       return new Response(
@@ -59,8 +49,8 @@ Deno.serve(async (req) => {
     if (!gameId || !action) throw new Error('Missing gameId or action')
 
     // 3. Fetch Game Status & State
-    // Check Status (User)
-    const { data: game, error: gameError } = await supabaseClient
+    // Check Status (Admin)
+    const { data: game, error: gameError } = await supabaseAdmin
       .from('games')
       .select('status')
       .eq('id', gameId)

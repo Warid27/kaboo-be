@@ -1,13 +1,13 @@
 
-export type Suit = 'HEARTS' | 'DIAMONDS' | 'CLUBS' | 'SPADES' | 'JOKER';
-export type Rank = 'A' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | 'J' | 'Q' | 'K' | 'JOKER';
+export type Suit = 'hearts' | 'diamonds' | 'clubs' | 'spades' | 'joker';
+export type Rank = 'A' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '10' | 'J' | 'Q' | 'K' | 'joker';
 
 export interface Card {
   id: string; // Unique ID for tracking specific cards
   suit: Suit;
   rank: Rank;
   value: number; // Game value (e.g., King of Diamonds = 0, etc.)
-  isFaceUp: boolean;
+  faceUp: boolean;
   source?: 'deck' | 'discard'; // Track source where it was drawn from
 }
 
@@ -22,9 +22,21 @@ export interface PlayerState {
   kabooCalled: boolean;
 }
 
+export interface GameSettings {
+  turnTimer: string;
+  mattsPairsRule: boolean;
+  useEffectCards: boolean;
+  numPlayers: number;
+  botDifficulty: string;
+  targetScore: string;
+}
+
 export interface GameState {
   roomCode: string;
   phase: 'lobby' | 'dealing' | 'initial_look' | 'playing' | 'scoring' | 'finished';
+  
+  // Settings
+  settings: GameSettings;
   
   // Players map (key: userId)
   players: Record<string, PlayerState>;

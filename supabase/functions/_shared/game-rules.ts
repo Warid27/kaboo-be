@@ -4,18 +4,18 @@ import { Card, GameState, PlayerState, Suit, Rank, GameAction } from './types.ts
 // --- Card Values & Generation ---
 
 export const getCardValue = (rank: Rank, suit: Suit): number => {
-  if (rank === 'JOKER') return -1;
+  if (rank === 'joker') return -1;
   
   // Red Kings (Hearts/Diamonds) = 0
   // Black Kings (Spades/Clubs) = 13
   if (rank === 'K') {
-      if (suit === 'HEARTS' || suit === 'DIAMONDS') return 0;
+      if (suit === 'hearts' || suit === 'diamonds') return 0;
       return 13;
   }
 
   // Red Jack/Queen = 0? 
   // Markdown says: "Red King, Jack, Queen (Hearts/Diamonds) | 0 | Best card"
-  if ((rank === 'J' || rank === 'Q') && (suit === 'HEARTS' || suit === 'DIAMONDS')) {
+  if ((rank === 'J' || rank === 'Q') && (suit === 'hearts' || suit === 'diamonds')) {
       return 0;
   }
   
@@ -27,7 +27,7 @@ export const getCardValue = (rank: Rank, suit: Suit): number => {
 };
 
 export const createDeck = (): Card[] => {
-  const suits: Suit[] = ['HEARTS', 'DIAMONDS', 'CLUBS', 'SPADES'];
+  const suits: Suit[] = ['hearts', 'diamonds', 'clubs', 'spades'];
   const ranks: Rank[] = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
   
   let deck: Card[] = [];
@@ -40,14 +40,14 @@ export const createDeck = (): Card[] => {
         suit,
         rank,
         value: getCardValue(rank, suit),
-        isFaceUp: false,
+        faceUp: false,
       });
     }
   }
   
   // Add 2 Jokers
-  deck.push({ id: crypto.randomUUID(), suit: 'JOKER', rank: 'JOKER', value: -1, isFaceUp: false });
-  deck.push({ id: crypto.randomUUID(), suit: 'JOKER', rank: 'JOKER', value: -1, isFaceUp: false });
+  deck.push({ id: crypto.randomUUID(), suit: 'joker', rank: 'joker', value: -1, faceUp: false });
+  deck.push({ id: crypto.randomUUID(), suit: 'joker', rank: 'joker', value: -1, faceUp: false });
   
   return shuffle(deck);
 };
@@ -62,7 +62,7 @@ export const shuffle = <T>(items: T[]): T[] => {
 
 // --- Game Logic ---
 
-export const initializeGame = (playerIds: string[], roomCode: string): GameState => {
+export const initializeGame = (playerIds: string[], roomCode: string, settings: any): GameState => {
   const deck = createDeck(); // This already calls shuffle(deck)
   const players: Record<string, PlayerState> = {};
   
@@ -87,7 +87,7 @@ export const initializeGame = (playerIds: string[], roomCode: string): GameState
   // Start discard pile
   const firstDiscard = deck.shift();
   if (firstDiscard) {
-    firstDiscard.isFaceUp = true;
+    firstDiscard.faceUp = true;
   }
   const discardPile = firstDiscard ? [firstDiscard] : [];
 
@@ -96,6 +96,7 @@ export const initializeGame = (playerIds: string[], roomCode: string): GameState
     return {
       roomCode,
       phase: 'initial_look', // Start in initial_look phase
+      settings,
       players,
       playerOrder,
       deck,
@@ -119,7 +120,7 @@ export const drawFromDeck = (state: GameState, userId: string): GameState => {
           const topCard = state.discardPile.pop()!;
           const newDeck = shuffle(state.discardPile);
           // Flip cards down
-          newDeck.forEach(c => c.isFaceUp = false);
+          newDeck.forEach(c => c.faceUp = false);
           state.deck = newDeck;
           state.discardPile = [topCard];
       } else {
@@ -130,7 +131,7 @@ export const drawFromDeck = (state: GameState, userId: string): GameState => {
   const card = state.deck.shift();
   if (!card) throw new Error("Deck is empty");
   
-  card.isFaceUp = true; // Player looks at it (private in reality, but logic-wise "held")
+  card.faceUp = true; // Player looks at it (private in reality, but logic-wise "held")
   card.source = 'deck';
   
   state.drawnCard = card;
@@ -146,7 +147,7 @@ export const drawFromDiscard = (state: GameState, userId: string): GameState => 
   if (state.discardPile.length === 0) throw new Error("Discard pile empty");
   
   const card = state.discardPile.pop()!;
-  card.isFaceUp = true;
+  card.faceUp = true;
   card.source = 'discard'; 
   
   state.drawnCard = card;
@@ -162,7 +163,7 @@ export const discardDrawnCard = (state: GameState, userId: string): GameState =>
     if (!state.drawnCard) throw new Error("No card drawn");
     if (state.drawnCard.source === 'discard') throw new Error("Cannot discard card drawn from discard pile");
 
-    state.drawnCard.isFaceUp = true;
+    state.drawnCard.faceUp = true;
     state.discardPile.push(state.drawnCard);
     const playedCard = state.drawnCard;
     state.drawnCard = null;
@@ -175,9 +176,9 @@ export const discardDrawnCard = (state: GameState, userId: string): GameState =>
     if (rank === '7' || rank === '8') effectType = 'PEEK_OWN';
     else if (rank === '9' || rank === '10') effectType = 'PEEK_OTHER';
     // Black J/Q allow Blind Swap
-    else if ((rank === 'J' || rank === 'Q') && (suit === 'SPADES' || suit === 'CLUBS')) effectType = 'SWAP_EITHER'; 
+    else if ((rank === 'J' || rank === 'Q') && (suit === 'spades' || suit === 'clubs')) effectType = 'SWAP_EITHER'; 
     // Black K allows Look & Swap
-    else if (rank === 'K' && (suit === 'SPADES' || suit === 'CLUBS')) effectType = 'LOOK_AND_SWAP'; 
+    else if (rank === 'K' && (suit === 'spades' || suit === 'clubs')) effectType = 'LOOK_AND_SWAP'; 
 
     if (effectType) {
         state.turnPhase = 'effect';
@@ -280,7 +281,7 @@ export const snapCard = (state: GameState, userId: string, cardIndex: number): G
     if (card.rank === topDiscard.rank) {
         // Success Snap
         player.cards.splice(cardIndex, 1); // Remove from hand
-        card.isFaceUp = true;
+        card.faceUp = true;
         state.discardPile.push(card); // Add to discard
         state.lastAction = `${player.name} snapped a ${card.rank}!`;
         
@@ -295,7 +296,7 @@ export const snapCard = (state: GameState, userId: string, cardIndex: number): G
         // Implementation:
         if (state.deck.length > 0) {
              const penaltyCard = state.deck.shift()!;
-             penaltyCard.isFaceUp = false; // or true?
+             penaltyCard.faceUp = false; // or true?
              player.cards.push(penaltyCard);
              state.lastAction = `${player.name} failed snap! Penalty card.`;
         } else {
@@ -317,9 +318,9 @@ export const swapWithOwn = (state: GameState, userId: string, cardIndex: number)
     
     const oldCard = player.cards[cardIndex];
     player.cards[cardIndex] = state.drawnCard; // Put new card in slot
-    player.cards[cardIndex].isFaceUp = false; // Face down in hand
+    player.cards[cardIndex].faceUp = false; // Face down in hand
     
-    oldCard.isFaceUp = true;
+    oldCard.faceUp = true;
     state.discardPile.push(oldCard); // Discard the old one
     state.drawnCard = null;
     
@@ -509,30 +510,37 @@ export const processMove = (state: GameState, action: GameAction, userId: string
 };
 
 export const sanitizeState = (state: GameState, viewingPlayerId: string): GameState => {
+    if (!state) return state;
     const safeState = JSON.parse(JSON.stringify(state)); 
     
     // Mask Deck (keep count)
-    safeState.deck = safeState.deck.map((c: Card) => ({ ...c, value: 0, suit: 'hearts', rank: 'A', isFaceUp: false })); 
+    if (safeState.deck && Array.isArray(safeState.deck)) {
+        safeState.deck = safeState.deck.map((c: Card) => ({ ...c, value: 0, suit: 'hearts', rank: 'A', faceUp: false })); 
+    }
     
     // Mask Players Cards
-    for (const pid in safeState.players) {
-        const player = safeState.players[pid];
-        player.cards = player.cards.map((card: Card, index: number) => {
-            // Special Peek Rule: Allow peeking at first 2 cards during peeking phase
-            if (state.phase === 'initial_look' && pid === viewingPlayerId && (index === 0 || index === 1)) {
-                return card;
-            }
+    if (safeState.players) {
+        for (const pid in safeState.players) {
+            const player = safeState.players[pid];
+            if (player && player.cards && Array.isArray(player.cards)) {
+                player.cards = player.cards.map((card: Card, index: number) => {
+                    // Special Peek Rule: Allow peeking at first 2 cards during peeking phase
+                    if (state.phase === 'initial_look' && pid === viewingPlayerId && (index === 0 || index === 1)) {
+                        return card;
+                    }
 
-            if (card.isFaceUp) return card; 
-            return { ...card, value: 0, suit: 'hearts', rank: 'A', isFaceUp: false };
-        });
+                    if (card.faceUp) return card; 
+                    return { ...card, value: 0, suit: 'hearts', rank: 'A', faceUp: false };
+                });
+            }
+        }
     }
     
     // Mask Drawn Card
     if (safeState.drawnCard) {
         if (safeState.drawnCard.source === 'deck') {
              if (viewingPlayerId !== safeState.currentTurnUserId) {
-                 safeState.drawnCard = { ...safeState.drawnCard, value: 0, suit: 'hearts', rank: 'A', isFaceUp: false };
+                 safeState.drawnCard = { ...safeState.drawnCard, value: 0, suit: 'hearts', rank: 'A', faceUp: false };
              }
         }
     }

@@ -4,7 +4,7 @@ import { corsHeaders } from "../_shared/cors.ts"
 
 console.log("Leave Game Function Loaded");
 
-Deno.serve(async (req) => {
+export const handler = async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -33,21 +33,13 @@ Deno.serve(async (req) => {
 
     if (!gameId) throw new Error('Game ID required')
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { 
-        global: { headers: { Authorization: authHeader } },
-        auth: { persistSession: false }
-      }
-    )
-
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(authHeader.replace('Bearer ', ''))
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token)
     if (userError || !user) {
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
@@ -56,7 +48,7 @@ Deno.serve(async (req) => {
     }
 
     // Find Game
-    const { data: game, error: gameError } = await supabaseClient
+    const { data: game, error: gameError } = await supabaseAdmin
       .from('games')
       .select('id, status, created_by')
       .eq('id', gameId)
@@ -65,7 +57,7 @@ Deno.serve(async (req) => {
     if (gameError || !game) throw new Error('Game not found')
 
     // Handle based on status
-    if (game.status === 'waiting') {
+    if (game.status === 'waiting' || game.status === 'playing') {
         // Remove player from game_players
         await supabaseAdmin
             .from('game_players')
@@ -106,69 +98,54 @@ Deno.serve(async (req) => {
             }
         }
 
-        // Update game_secrets
-        const { data: secretData } = await supabaseAdmin
-            .from('game_secrets')
-            .select('game_state')
-            .eq('game_id', gameId)
-            .single();
+        // Update game_secrets if exists
+         const { data: secretData } = await supabaseAdmin
+             .from('game_secrets')
+             .select('game_state')
+             .eq('game_id', gameId)
+             .single();
+ 
+         if (secretData && secretData.game_state) {
+             const gameState = secretData.game_state;
+             
+             // Remove from players
+             if (gameState.players && gameState.players[user.id]) {
+                 delete gameState.players[user.id];
+             }
+             
+             // Remove from playerOrder
+             if (gameState.playerOrder) {
+                 gameState.playerOrder = gameState.playerOrder.filter((id: string) => id !== user.id);
+             }
+ 
+             // Sync Host in State
+             if (newHostId && gameState.players && gameState.players[newHostId]) {
+                  gameState.players[newHostId].isHost = true;
+             }
+ 
+             // Save back
+             await supabaseAdmin
+                 .from('game_secrets')
+                 .update({ game_state: gameState })
+                 .eq('game_id', gameId);
+         }
+ 
+         // Touch games table to trigger subscription
+         await supabaseAdmin
+             .from('games')
+             .update({ updated_at: new Date().toISOString() })
+             .eq('id', gameId);
 
-        if (secretData && secretData.game_state) {
-            const gameState = secretData.game_state;
-            
-            // Remove from players
-            if (gameState.players && gameState.players[user.id]) {
-                delete gameState.players[user.id];
-            }
-            
-            // Remove from playerOrder
-            if (gameState.playerOrder) {
-                gameState.playerOrder = gameState.playerOrder.filter((id: string) => id !== user.id);
-            }
-
-            // Sync Host in State
-            if (newHostId && gameState.players && gameState.players[newHostId]) {
-                 gameState.players[newHostId].isHost = true;
-            }
-
-            // Save back
-            await supabaseAdmin
-                .from('game_secrets')
-                .update({ game_state: gameState })
-                .eq('game_id', gameId);
-        }
-
-        // Touch games table to trigger subscription
-        await supabaseAdmin
-            .from('games')
-            .update({ updated_at: new Date().toISOString() })
-            .eq('id', gameId);
-
-    } else {
-        // Just mark disconnected
-        const { data: secretData } = await supabaseAdmin
-            .from('game_secrets')
-            .select('game_state')
-            .eq('game_id', gameId)
-            .single();
-
-        if (secretData && secretData.game_state) {
-            const gameState = secretData.game_state;
-            if (gameState.players && gameState.players[user.id]) {
-                gameState.players[user.id].isConnected = false;
-                
-                await supabaseAdmin
-                .from('game_secrets')
-                .update({ game_state: gameState })
-                .eq('game_id', gameId);
-            }
-        }
+        return new Response(
+            JSON.stringify({ success: true, message: 'Left game successfully', newHostId }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+        );
     }
 
     return new Response(
-      JSON.stringify({ success: true }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
-    )
+        JSON.stringify({ error: 'Game status not supported for leaving' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+    );
 
   } catch (error) {
     return new Response(
@@ -176,4 +153,8 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
     )
   }
-})
+}
+
+if (import.meta.main) {
+  Deno.serve(handler);
+}

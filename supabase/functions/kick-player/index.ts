@@ -34,21 +34,13 @@ Deno.serve(async (req) => {
     if (!gameId) throw new Error('Game ID required')
     if (!playerIdToKick) throw new Error('Player ID to kick required')
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { 
-        global: { headers: { Authorization: authHeader } },
-        auth: { persistSession: false }
-      }
-    )
-
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(authHeader.replace('Bearer ', ''))
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token)
     if (userError || !user) {
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
@@ -57,7 +49,7 @@ Deno.serve(async (req) => {
     }
 
     // Find Game and verify host
-    const { data: game, error: gameError } = await supabaseClient
+    const { data: game, error: gameError } = await supabaseAdmin
       .from('games')
       .select('id, status, created_by')
       .eq('id', gameId)

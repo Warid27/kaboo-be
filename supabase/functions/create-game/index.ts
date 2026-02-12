@@ -4,7 +4,7 @@ import { corsHeaders } from "../_shared/cors.ts"
 
 console.log("Create Game Function Loaded");
 
-Deno.serve(async (req) => {
+export const handler = async (req: Request): Promise<Response> => {
   // Handle CORS Preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -22,23 +22,13 @@ Deno.serve(async (req) => {
 
     console.log("Auth Header length:", authHeader.length);
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { 
-        global: { headers: { Authorization: authHeader } },
-        auth: {
-          persistSession: false // Required for Edge Functions to use the Authorization header correctly
-        }
-      }
-    )
-
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(authHeader.replace('Bearer ', ''))
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token)
     
     if (userError || !user) {
       console.error("Auth error details:", userError);
@@ -65,7 +55,7 @@ Deno.serve(async (req) => {
     const roomCode = Math.random().toString(36).substring(2, 6).toUpperCase();
 
     // Ensure Profile Exists
-    let { data: profile } = await supabaseClient
+    let { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('username')
       .eq('id', user.id)
@@ -96,7 +86,7 @@ Deno.serve(async (req) => {
     const playerName = reqPlayerName !== 'Host' ? reqPlayerName : (profile?.username || 'Host');
 
     // Create Game
-    const { data: game, error: gameError } = await supabaseClient
+    const { data: game, error: gameError } = await supabaseAdmin
       .from('games')
       .insert({
         room_code: roomCode,
@@ -112,27 +102,26 @@ Deno.serve(async (req) => {
     const initialState = {
       roomCode: roomCode,
       phase: 'lobby',
+      settings: {
+        turnTimer: '30',
+        mattsPairsRule: false,
+        useEffectCards: true,
+        numPlayers: 4,
+        botDifficulty: 'medium',
+        targetScore: '100'
+      },
       players: {
         [user.id]: {
           id: user.id,
           name: playerName,
-          isConnected: true,
-          isReady: false,
-          cards: [],
+          ready: true,
+          position: 0,
+          hand: [],
           score: 0,
-          kabooCalled: false
+          isHost: true
         }
       },
-      playerOrder: [user.id],
-      deck: [],
-      discardPile: [],
-      currentTurnUserId: null,
-      turnPhase: 'draw',
-      drawnCard: null,
-      pendingEffect: null,
-      kabooCallerId: null,
-      turnsLeftAfterKaboo: null,
-      lastAction: 'Game created'
+      playerOrder: [user.id]
     };
 
     const { error: secretsError } = await supabaseAdmin
@@ -148,7 +137,7 @@ Deno.serve(async (req) => {
         throw secretsError;
     }
 
-    // Add Creator as Player (Admin)
+    // Add Host as Player
     const { data: player, error: playerError } = await supabaseAdmin
       .from('game_players')
       .insert({
@@ -177,7 +166,6 @@ Deno.serve(async (req) => {
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     )
-
   } catch (error) {
     console.error("Function error:", error);
     return new Response(
@@ -185,4 +173,8 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
     )
   }
-})
+};
+
+if (import.meta.main) {
+  Deno.serve(handler);
+}

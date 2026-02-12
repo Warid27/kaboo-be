@@ -5,7 +5,7 @@ import { initializeGame } from "../_shared/game-rules.ts"
 
 console.log("Start Game Function Loaded");
 
-Deno.serve(async (req) => {
+export const handler = async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -30,23 +30,13 @@ Deno.serve(async (req) => {
 
     if (!gameId) throw new Error('Game ID required')
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { 
-        global: { headers: { Authorization: authHeader } },
-        auth: {
-          persistSession: false
-        }
-      }
-    )
-
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(authHeader.replace('Bearer ', ''))
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token)
     if (userError || !user) {
       console.error("Auth error:", userError);
       return new Response(
@@ -56,7 +46,7 @@ Deno.serve(async (req) => {
     }
 
     // Fetch Game
-    const { data: game, error: gameError } = await supabaseClient
+    const { data: game, error: gameError } = await supabaseAdmin
       .from('games')
       .select('id, created_by, status, room_code')
       .eq('id', gameId)
@@ -67,7 +57,7 @@ Deno.serve(async (req) => {
     if (game.status !== 'waiting') throw new Error('Game already started')
 
     // Fetch Players
-    const { data: players, error: playersError } = await supabaseClient
+    const { data: players, error: playersError } = await supabaseAdmin
       .from('game_players')
       .select('user_id, player_name')
       .eq('game_id', gameId)
@@ -78,8 +68,18 @@ Deno.serve(async (req) => {
 
     const playerIds = players.map(p => p.user_id)
 
+    // Fetch current settings from secrets
+    const { data: secretData, error: secretError } = await supabaseAdmin
+        .from('game_secrets')
+        .select('game_state')
+        .eq('game_id', gameId)
+        .single();
+    
+    if (secretError || !secretData) throw new Error('Game settings not found');
+    const settings = secretData.game_state.settings;
+
     // Initialize Game Logic
-    const initialState = initializeGame(playerIds, game.room_code)
+    const initialState = initializeGame(playerIds, game.room_code, settings)
 
     // Update Player Names in State
     players.forEach(p => {
@@ -121,4 +121,8 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
     )
   }
-})
+};
+
+if (import.meta.main) {
+  Deno.serve(handler);
+}

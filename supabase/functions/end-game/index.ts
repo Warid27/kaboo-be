@@ -2,7 +2,7 @@
 import { createClient } from "jsr:@supabase/supabase-js@2"
 import { corsHeaders } from "../_shared/cors.ts"
 
-console.log("Toggle Ready Function Loaded");
+console.log("End Game Function Loaded");
 
 export const handler = async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') {
@@ -19,12 +19,13 @@ export const handler = async (req: Request): Promise<Response> => {
     }
 
     // Parse Body
-    let gameId, isReady;
+    let gameId;
     try {
         const text = await req.text();
-        const body = JSON.parse(text);
-        gameId = body.gameId;
-        isReady = body.isReady;
+        if (text) {
+          const body = JSON.parse(text);
+          gameId = body.gameId;
+        }
     // deno-lint-ignore no-unused-vars
     } catch (e) {
         throw new Error('Invalid request body');
@@ -40,59 +41,54 @@ export const handler = async (req: Request): Promise<Response> => {
     const token = authHeader.replace('Bearer ', '');
     const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token)
     if (userError || !user) {
-      console.error("Auth error:", userError);
       return new Response(
-        JSON.stringify({ error: 'Unauthorized', details: userError }),
+        JSON.stringify({ error: 'Unauthorized' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
       )
     }
 
-    // Fetch Game Secrets
-    const { data: secretData, error: secretError } = await supabaseAdmin
-      .from('game_secrets')
-      .select('game_state')
-      .eq('game_id', gameId)
-      .single();
+    // Find Game and verify host
+    const { data: game, error: gameError } = await supabaseAdmin
+      .from('games')
+      .select('id, created_by')
+      .eq('id', gameId)
+      .single()
 
-    if (secretError || !secretData) throw new Error('Game not found');
+    if (gameError || !game) throw new Error('Game not found')
 
-    const gameState = secretData.game_state;
-    
-    // Validate player exists
-    if (!gameState.players || !gameState.players[user.id]) {
-        throw new Error('Player not in game');
+    // Only host can end game
+    if (game.created_by !== user.id) {
+        throw new Error('Only the host can end the game')
     }
 
-    // Update readiness
-    gameState.players[user.id].isReady = isReady;
+    console.log(`Host ${user.id} is ending game ${gameId}`);
 
-    // Save back
-    const { error: updateError } = await supabaseAdmin
-        .from('game_secrets')
-        .update({ game_state: gameState })
-        .eq('game_id', gameId);
+    // Hard Delete: This will trigger a notification to all players (via record deletion)
+    // and cleanup all associated data.
+    
+    // 1. Delete secrets
+    await supabaseAdmin.from('game_secrets').delete().eq('game_id', gameId);
+    
+    // 2. Delete players (cascade might handle this, but let's be explicit)
+    await supabaseAdmin.from('game_players').delete().eq('game_id', gameId);
+    
+    // 3. Delete game
+    const { error: deleteError } = await supabaseAdmin.from('games').delete().eq('id', gameId);
 
-    if (updateError) throw updateError;
-
-    // Trigger Realtime Update by touching games table
-    await supabaseAdmin
-        .from('games')
-        .update({ updated_at: new Date().toISOString() })
-        .eq('id', gameId);
+    if (deleteError) throw deleteError;
 
     return new Response(
-      JSON.stringify({ success: true, isReady }),
+      JSON.stringify({ success: true, message: 'Game ended and deleted' }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
     )
 
   } catch (error) {
-    console.error("Toggle Ready error:", error);
     return new Response(
-      JSON.stringify({ error: (error as Error).message }),
+      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
     )
   }
-};
+}
 
 if (import.meta.main) {
   Deno.serve(handler);

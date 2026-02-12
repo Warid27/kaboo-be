@@ -20,24 +20,14 @@ Deno.serve(async (req) => {
       )
     }
 
-    const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-      { 
-        global: { headers: { Authorization: authHeader } },
-        auth: {
-          persistSession: false
-        }
-      }
-    )
-
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
     // 1. Auth Check
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(authHeader.replace('Bearer ', ''))
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token)
     if (userError || !user) {
       console.error("Auth error:", userError);
       return new Response(
@@ -69,11 +59,27 @@ Deno.serve(async (req) => {
 
     if (fetchError || !secretData) throw new Error('Game not found')
 
+    // Handle missing or invalid game_state
+    if (!secretData.game_state) {
+        console.error("game_state is null or undefined for gameId:", gameId);
+        return new Response(
+            JSON.stringify({ game_state: { phase: 'lobby', players: {} } }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+        )
+    }
+
     const currentState = secretData.game_state as GameState
+
+    // Robustness: Ensure players object exists
+    if (!currentState.players) {
+        currentState.players = {};
+    }
 
     // Robustness: Ensure playerOrder exists
     if (!currentState.playerOrder && currentState.players) {
         currentState.playerOrder = Object.keys(currentState.players);
+    } else if (!currentState.playerOrder) {
+        currentState.playerOrder = [];
     }
 
     // 4. Validate User is in Game
@@ -81,7 +87,7 @@ Deno.serve(async (req) => {
     if (!currentState.players || !currentState.players[user.id]) {
         // Fallback: Check if game is waiting (lobby) and just return basic state
         // Or check DB for player membership if state is empty
-        const { data: playerCheck } = await supabaseClient
+        const { data: playerCheck } = await supabaseAdmin
             .from('game_players')
             .select('id')
             .eq('game_id', gameId)
