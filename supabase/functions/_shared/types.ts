@@ -51,7 +51,7 @@ export interface GameState {
   turnPhase: 'draw' | 'action' | 'discard' | 'effect'; // Sub-phases of a turn
   drawnCard: Card | null; // The card currently held by the active player (from deck)
   pendingEffect: {
-      type: 'PEEK_OWN' | 'PEEK_OTHER' | 'SWAP_EITHER' | 'LOOK_AND_SWAP';
+      type: 'PEEK_OWN' | 'PEEK_OTHER' | 'SWAP_EITHER' | 'LOOK_AND_SWAP' | 'FULL_VISION_SWAP';
       sourceCardRank?: Rank;
   } | null;
 
@@ -72,7 +72,14 @@ export type GameAction =
   | { type: 'CALL_KABOO' }
   | { type: 'PEEK_OWN', cardIndex: number } // If ability allows
   | { type: 'SPY_OPPONENT', targetPlayerId: string, cardIndex: number } // If ability allows
-  | { type: 'SWAP_ANY', targetPlayerId: string, cardIndex: number, ownCardIndex: number } // If ability allows
+  | { 
+      type: 'SWAP_ANY', 
+      targetPlayerId?: string, 
+      cardIndex?: number, 
+      ownCardIndex?: number,
+      card1?: { playerId: string; cardIndex: number },
+      card2?: { playerId: string; cardIndex: number }
+    } // If ability allows
   | { type: 'SNAP', cardIndex: number }; // Tap/Snap action
 
 export interface GameResult {

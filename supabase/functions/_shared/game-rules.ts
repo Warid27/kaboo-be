@@ -114,18 +114,12 @@ export const initializeGame = (playerIds: string[], roomCode: string, settings: 
 export const drawFromDeck = (state: GameState, userId: string): GameState => {
   if (state.currentTurnUserId !== userId) throw new Error("Not your turn");
   if (state.turnPhase !== 'draw') throw new Error("Cannot draw in this phase");
+  
   if (state.deck.length === 0) {
-      // Reshuffle discard into deck if empty (keeping top card)
-      if (state.discardPile.length > 1) {
-          const topCard = state.discardPile.pop()!;
-          const newDeck = shuffle(state.discardPile);
-          // Flip cards down
-          newDeck.forEach(c => c.faceUp = false);
-          state.deck = newDeck;
-          state.discardPile = [topCard];
-      } else {
-          throw new Error("Deck empty and cannot reshuffle");
-      }
+      // No deck reshuffle - Trigger Auto-Kaboo or Game End
+      state.kabooCallerId = 'SYSTEM'; // Mark as auto-kaboo
+      state.turnsLeftAfterKaboo = 0; // End immediately
+      return endTurn(state);
   }
   
   const card = state.deck.shift();
@@ -168,17 +162,23 @@ export const discardDrawnCard = (state: GameState, userId: string): GameState =>
     const playedCard = state.drawnCard;
     state.drawnCard = null;
     
+    // Trigger effects if applicable
+    return triggerCardEffect(state, playedCard);
+};
+
+const triggerCardEffect = (state: GameState, playedCard: Card): GameState => {
     // Check Powers
     const rank = playedCard.rank;
-    const suit = playedCard.suit;
-    let effectType: 'PEEK_OWN' | 'PEEK_OTHER' | 'SWAP_EITHER' | 'LOOK_AND_SWAP' | null = null;
+    let effectType: 'PEEK_OWN' | 'PEEK_OTHER' | 'SWAP_EITHER' | 'LOOK_AND_SWAP' | 'FULL_VISION_SWAP' | null = null;
 
     if (rank === '7' || rank === '8') effectType = 'PEEK_OWN';
     else if (rank === '9' || rank === '10') effectType = 'PEEK_OTHER';
-    // Black J/Q allow Blind Swap
-    else if ((rank === 'J' || rank === 'Q') && (suit === 'spades' || suit === 'clubs')) effectType = 'SWAP_EITHER'; 
-    // Black K allows Look & Swap
-    else if (rank === 'K' && (suit === 'spades' || suit === 'clubs')) effectType = 'LOOK_AND_SWAP'; 
+    // Jack: Blind Swap
+    else if (rank === 'J') effectType = 'SWAP_EITHER'; 
+    // Queen: Semi-Blind Swap (Look & Swap)
+    else if (rank === 'Q') effectType = 'LOOK_AND_SWAP'; 
+    // King: Full Vision Swap
+    else if (rank === 'K') effectType = 'FULL_VISION_SWAP'; 
 
     if (effectType) {
         state.turnPhase = 'effect';
@@ -193,71 +193,80 @@ export const discardDrawnCard = (state: GameState, userId: string): GameState =>
 export const resolveEffect = (
     state: GameState, 
     userId: string, 
-    targetPlayerId: string, 
-    targetCardIndex: number,
-    ownCardIndex?: number // Required for Swap
+    action: any
 ): { state: GameState, result?: any } => {
     if (state.currentTurnUserId !== userId) throw new Error("Not your turn");
     if (state.turnPhase !== 'effect') throw new Error("Not in effect phase");
     if (!state.pendingEffect) throw new Error("No pending effect");
 
     const effect = state.pendingEffect.type;
-    const targetPlayer = state.players[targetPlayerId];
-    if (!targetPlayer) throw new Error("Target player not found");
-    if (!targetPlayer.cards[targetCardIndex]) throw new Error("Target card invalid");
-
     let result = null;
 
-    if (effect === 'PEEK_OWN') {
-        if (targetPlayerId !== userId) throw new Error("Must peek own card");
-        // Result is the card info. In a real server, we return this to the client only.
-        // For state, we just mark it done.
-        // Optionally, we could mark card as 'knownByOwner' in state if we tracked that.
+    if (effect === 'PEEK_OWN' || effect === 'PEEK_OTHER') {
+        const targetPlayerId = action.targetPlayerId || (effect === 'PEEK_OWN' ? userId : null);
+        const targetCardIndex = action.cardIndex;
+        
+        if (!targetPlayerId) throw new Error("Target player required");
+        if (targetCardIndex === undefined) throw new Error("Card index required");
+        
+        const targetPlayer = state.players[targetPlayerId];
+        if (!targetPlayer) throw new Error("Target player not found");
+        if (!targetPlayer.cards[targetCardIndex]) throw new Error("Target card invalid");
+
+        if (effect === 'PEEK_OWN' && targetPlayerId !== userId) throw new Error("Must peek own card");
+        if (effect === 'PEEK_OTHER' && targetPlayerId === userId) throw new Error("Must peek other player's card");
+
         result = targetPlayer.cards[targetCardIndex];
-        state.lastAction = `Peeked own card`;
+        state.lastAction = effect === 'PEEK_OWN' ? `Peeked own card` : `Peeked ${targetPlayer.name}'s card`;
     } 
-    else if (effect === 'PEEK_OTHER') {
-        if (targetPlayerId === userId) throw new Error("Must peek other player's card");
-        result = targetPlayer.cards[targetCardIndex];
-        state.lastAction = `Peeked ${targetPlayer.name}'s card`;
-    }
-    else if (effect === 'SWAP_EITHER') {
-        // Blind Swap
-        if (ownCardIndex === undefined) throw new Error("Own card index required for swap");
-        if (targetPlayerId === userId) throw new Error("Swap with yourself? Use Swap Action.");
-        
-        const myself = state.players[userId];
-        if (!myself.cards[ownCardIndex]) throw new Error("Invalid own card");
-        
-        // Swap
-        const myCard = myself.cards[ownCardIndex];
-        const theirCard = targetPlayer.cards[targetCardIndex];
-        
-        myself.cards[ownCardIndex] = theirCard;
-        targetPlayer.cards[targetCardIndex] = myCard;
-        
-        state.lastAction = `Swapped card with ${targetPlayer.name}`;
-    }
-    else if (effect === 'LOOK_AND_SWAP') {
-        // This is complex. Usually it's a 2-step process: Look, THEN decide to swap.
-        // For MVP, let's treat it as "Peek Other" OR "Swap". 
-        // If the user sends "ownCardIndex", it's a swap. If not, it's a peek?
-        // Or we enforce "Peek first".
-        // Let's implement it as Peek Other for now, or just Swap.
-        // Let's do Swap for now (powerful).
-         if (ownCardIndex !== undefined) {
-             // Perform Swap
-             const myself = state.players[userId];
-             const myCard = myself.cards[ownCardIndex];
-             const theirCard = targetPlayer.cards[targetCardIndex];
-             myself.cards[ownCardIndex] = theirCard;
-             targetPlayer.cards[targetCardIndex] = myCard;
-             state.lastAction = `Swapped (King) with ${targetPlayer.name}`;
-         } else {
-             // Just Peek
+    else if (effect === 'SWAP_EITHER' || effect === 'LOOK_AND_SWAP' || effect === 'FULL_VISION_SWAP') {
+        // Handle both old and new payload formats for compatibility
+        let p1Id, c1Idx, p2Id, c2Idx;
+
+        if (action.card1 && action.card2) {
+            p1Id = action.card1.playerId;
+            c1Idx = action.card1.cardIndex;
+            p2Id = action.card2.playerId;
+            c2Idx = action.card2.cardIndex;
+        } else {
+            // Fallback to old format
+            p1Id = userId;
+            c1Idx = action.ownCardIndex;
+            p2Id = action.targetPlayerId;
+            c2Idx = action.cardIndex;
+        }
+
+        if (p1Id && c1Idx !== undefined && p2Id && c2Idx !== undefined) {
+            // Perform Swap
+            const p1 = state.players[p1Id];
+            const p2 = state.players[p2Id];
+            if (!p1 || !p2) throw new Error("Players not found for swap");
+            if (!p1.cards[c1Idx] || !p2.cards[c2Idx]) throw new Error("Invalid cards for swap");
+
+            const card1 = p1.cards[c1Idx];
+            const card2 = p2.cards[c2Idx];
+
+            p1.cards[c1Idx] = card2;
+            p2.cards[c2Idx] = card1;
+
+            state.lastAction = `Swapped cards between ${p1.name} and ${p2.name}`;
+        } else if (effect === 'LOOK_AND_SWAP' || effect === 'FULL_VISION_SWAP') {
+             // Peek part of Look & Swap
+             const targetPlayerId = action.targetPlayerId;
+             const targetCardIndex = action.cardIndex;
+             if (!targetPlayerId || targetCardIndex === undefined) throw new Error("Target required for peek");
+             
+             const targetPlayer = state.players[targetPlayerId];
+             if (!targetPlayer) throw new Error("Target player not found");
              result = targetPlayer.cards[targetCardIndex];
-             state.lastAction = `Peeked (King) ${targetPlayer.name}'s card`;
-         }
+             state.lastAction = `Peeked card during ${effect}`;
+             
+             // In LOOK_AND_SWAP or FULL_VISION_SWAP, we might stay in effect phase?
+             // But current logic ends turn after one action. 
+             // For now, let's keep it simple: one peek OR one swap.
+        } else {
+            throw new Error("Missing parameters for swap");
+        }
     }
 
     state.pendingEffect = null;
@@ -325,7 +334,9 @@ export const swapWithOwn = (state: GameState, userId: string, cardIndex: number)
     state.drawnCard = null;
     
     state.lastAction = `Swapped card`;
-    return endTurn(state);
+    
+    // Trigger effects if the swapped-out card has one
+    return triggerCardEffect(state, oldCard);
 };
 
 export const callKaboo = (state: GameState, userId: string): GameState => {
@@ -498,11 +509,9 @@ export const processMove = (state: GameState, action: GameAction, userId: string
         
         // Effects
         case 'PEEK_OWN':
-             return resolveEffect(state, userId, userId, action.cardIndex);
         case 'SPY_OPPONENT':
-             return resolveEffect(state, userId, action.targetPlayerId, action.cardIndex);
         case 'SWAP_ANY':
-             return resolveEffect(state, userId, action.targetPlayerId, action.cardIndex, action.ownCardIndex);
+             return resolveEffect(state, userId, action);
              
         default:
              throw new Error("Invalid action type");

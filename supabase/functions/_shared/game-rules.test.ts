@@ -120,11 +120,32 @@ Deno.test("Card Effect - Peek Own (7)", () => {
     assertEquals(game.pendingEffect?.type, "PEEK_OWN");
     
     // Resolve Effect
-    const result = resolveEffect(game, "p1", "p1", 0);
+    const result = resolveEffect(game, "p1", { targetPlayerId: "p1", cardIndex: 0 });
     game = result.state;
     
     assertEquals(game.turnPhase, "draw"); // Turn ends after effect
     assertEquals(game.currentTurnUserId, "p2");
+});
+
+Deno.test("Card Effect - Trigger on Swap", () => {
+    const players = ["p1", "p2"];
+    let game = initializeGame(players, "TEST", mockSettings);
+    game.currentTurnUserId = "p1";
+    
+    // Draw a normal card (e.g., 3)
+    game = drawFromDeck(game, "p1");
+    game.drawnCard!.rank = '3';
+    
+    // Force a 7 into p1's hand at index 0
+    game.players["p1"].cards[0] = { id: 'c7', rank: '7', suit: 'spades', value: 7, faceUp: false };
+    
+    // Swap the drawn 3 with the 7 in hand
+    game = swapWithOwn(game, "p1", 0);
+    
+    // The 7 was pushed to discard, so it should trigger an effect
+    assertEquals(game.turnPhase, "effect");
+    assertEquals(game.pendingEffect?.type, "PEEK_OWN");
+    assertEquals(game.discardPile[game.discardPile.length-1].rank, '7');
 });
 
 Deno.test("Snap Logic", () => {
