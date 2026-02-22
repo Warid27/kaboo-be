@@ -17,8 +17,61 @@ This backend is built on **Supabase** using **Edge Functions (Deno)** and **Post
 
 ## Authentication
 
-All endpoints require a standard Supabase Auth Bearer Token.
+All endpoints require a standard Supabase Auth Bearer Token.  
 **Header**: `Authorization: Bearer <access_token>`
+
+### Login
+
+Kaboo uses Supabase Auth directly; there is no custom login endpoint in the backend.  
+Clients obtain an access token using the Supabase client SDK:
+
+```ts
+// Email/password login
+const { data, error } = await supabase.auth.signInWithPassword({
+  email,
+  password,
+});
+
+if (error) {
+  // handle login error
+}
+
+const accessToken = data.session?.access_token;
+```
+
+For tests and CI, you can seed dedicated test users and log in with them:
+
+- Configure in your backend env:
+  - `TEST_USER_EMAILS=alice@example.com,bob@example.com`
+  - `TEST_USER_PASSWORD=your_test_password`
+- Seed users with:
+
+```bash
+deno run --allow-env --allow-net --env=.env.test.local supabase/scripts/seed-test-users.ts
+```
+
+The backend E2E tests already use these env variables to log in via `signInWithPassword`.
+
+### Anonymous Login (optional)
+
+If you want quick throwaway sessions (e.g. for local dev), you can still use Supabase anonymous auth:
+
+```ts
+const { data, error } = await supabase.auth.signInAnonymously();
+```
+
+This is supported by the backend, but is subject to Supabase rate limits and is not recommended for CI.
+
+### Logout
+
+Logging out is handled entirely on the client by calling `supabase.auth.signOut()` and clearing any local state:
+
+```ts
+await supabase.auth.signOut();
+// Clear any cached user/session/game state in the frontend store
+```
+
+The backend trusts whatever bearer token is provided; once the client signs out and stops sending a valid token, all protected endpoints will return `401 Unauthorized`.
 
 ---
 

@@ -136,6 +136,13 @@ export const handler = async (req: Request): Promise<Response> => {
 
     if (joinError) throw joinError
 
+    console.log("Join Game - inserted player", {
+      gameId: game.id,
+      userId: user.id,
+      playerId: player.id,
+      position,
+    });
+
     // Update Game Secrets to include new player
     try {
       const { data: secretData } = await supabaseAdmin

@@ -64,6 +64,10 @@ export const handler = async (req: Request): Promise<Response> => {
       .order('position', { ascending: true })
 
     if (playersError) throw playersError
+    console.log("Start Game - players found", {
+      gameId,
+      count: players?.length ?? 0,
+    });
     if (!players || players.length < 2) throw new Error('Need at least 2 players')
 
     const playerIds = players.map(p => p.user_id)

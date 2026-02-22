@@ -1,11 +1,11 @@
 import { createClient } from "jsr:@supabase/supabase-js@2"
 import { corsHeaders } from "../_shared/cors.ts"
-import { processMove, sanitizeState } from "../_shared/game-rules.ts"
-import { GameAction, GameState } from "../_shared/types.ts"
+import { processMove, sanitizeState, getCardValue } from "../_shared/game-rules.ts"
+import { GameAction, GameState, Card, Rank, Suit } from "../_shared/types.ts"
 
 console.log("Play Move Function Loaded");
 
-Deno.serve(async (req) => {
+export const handler = async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -48,6 +48,8 @@ Deno.serve(async (req) => {
 
     if (!gameId || !action) throw new Error('Missing gameId or action')
 
+    const allowTestDeckOverride = Deno.env.get("ALLOW_TEST_DECK_OVERRIDE") === "true"
+
     // 3. Fetch Game Status & State
     // Check Status (Admin)
     const { data: game, error: gameError } = await supabaseAdmin
@@ -70,15 +72,52 @@ Deno.serve(async (req) => {
 
     const currentState = secretData.game_state as GameState
 
-    // 4. Process Move
-    // Note: processMove mutates the state? Yes, my implementation mutates.
-    // Ideally it should be immutable, but Deno memory is isolated per request.
-    // However, I should be careful.
-    
-    // We need to pass the userId of the player making the move.
-    // Ensure the user is part of the game?
-    // The game state has players map.
     if (!currentState.players[user.id]) throw new Error('You are not in this game')
+
+    if (action.type === "SET_TEST_DECK") {
+      if (!allowTestDeckOverride) {
+        throw new Error("Test deck override disabled")
+      }
+      const cards = Array.isArray(action.cards) ? action.cards : []
+      if (!cards.length) {
+        throw new Error("SET_TEST_DECK requires cards array")
+      }
+      const newDeck: Card[] = cards.map((c: { rank: Rank; suit?: Suit }) => {
+        const suit: Suit = c.suit ?? "hearts"
+        const rank: Rank = c.rank
+        const value = getCardValue(rank, suit)
+        return {
+          id: crypto.randomUUID(),
+          suit,
+          rank,
+          value,
+          faceUp: false,
+          source: "deck",
+        }
+      })
+      currentState.deck = newDeck
+      const newState = currentState
+      const { error: updateSecretError } = await supabaseAdmin
+        .from('game_secrets')
+        .update({ game_state: newState })
+        .eq('game_id', gameId)
+
+      if (updateSecretError) throw updateSecretError
+
+      const { error: updateGameError } = await supabaseAdmin
+        .from('games')
+        .update({
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', gameId)
+
+      if (updateGameError) throw updateGameError
+
+      return new Response(
+        JSON.stringify({ success: true, game_state: sanitizeState(newState, user.id) }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+      )
+    }
 
     const { state: newState, result } = processMove(currentState, action as GameAction, user.id)
 
@@ -113,4 +152,8 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
     )
   }
-})
+};
+
+if (import.meta.main) {
+  Deno.serve(handler);
+}

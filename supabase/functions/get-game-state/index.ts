@@ -6,7 +6,7 @@ import { GameState } from "../_shared/types.ts"
 
 console.log("Get Game State Function Loaded");
 
-Deno.serve(async (req) => {
+export const handler = async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -59,16 +59,19 @@ Deno.serve(async (req) => {
 
     if (fetchError || !secretData) throw new Error('Game not found')
 
-    // Handle missing or invalid game_state
-    if (!secretData.game_state) {
-        console.error("game_state is null or undefined for gameId:", gameId);
-        return new Response(
-            JSON.stringify({ game_state: { phase: 'lobby', players: {} } }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
-        )
+    const rawState = secretData.game_state as unknown
+    const isMissingState =
+      !rawState ||
+      (typeof rawState === 'object' && rawState !== null && Object.keys(rawState as Record<string, unknown>).length === 0)
+
+    if (isMissingState) {
+      return new Response(
+        JSON.stringify({ game_state: { phase: 'lobby', players: {} } }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+      )
     }
 
-    const currentState = secretData.game_state as GameState
+    const currentState = rawState as GameState
 
     // Robustness: Ensure players object exists
     if (!currentState.players) {
@@ -120,4 +123,8 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
     )
   }
-})
+};
+
+if (import.meta.main) {
+  Deno.serve(handler);
+}

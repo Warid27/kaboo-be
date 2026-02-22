@@ -2,14 +2,19 @@
 import { createClient } from "jsr:@supabase/supabase-js@2"
 import { corsHeaders } from "../_shared/cors.ts"
 
-Deno.serve(async (req) => {
+export const handler = async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
 
   try {
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) throw new Error('Missing Authorization header');
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: 'Missing Authorization header' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
+      )
+    }
 
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -22,7 +27,6 @@ Deno.serve(async (req) => {
 
     const { gameId, settings } = await req.json();
 
-    // 1. Verify user is host
     const { data: game, error: gameError } = await supabaseAdmin
       .from('games')
       .select('created_by')
@@ -32,7 +36,6 @@ Deno.serve(async (req) => {
     if (gameError || !game) throw new Error('Game not found');
     if (game.created_by !== user.id) throw new Error('Only the host can update settings');
 
-    // 2. Fetch current state
     const { data: secretData, error: secretError } = await supabaseAdmin
       .from('game_secrets')
       .select('game_state')
@@ -42,26 +45,23 @@ Deno.serve(async (req) => {
     if (secretError || !secretData) throw new Error('Game state not found');
 
     const gameState = secretData.game_state;
-    
-    // 3. Update settings
+
     gameState.settings = {
-        ...gameState.settings,
-        ...settings
+      ...gameState.settings,
+      ...settings,
     };
 
-    // 4. Save back
     const { error: updateError } = await supabaseAdmin
-        .from('game_secrets')
-        .update({ game_state: gameState })
-        .eq('game_id', gameId);
+      .from('game_secrets')
+      .update({ game_state: gameState })
+      .eq('game_id', gameId);
 
     if (updateError) throw updateError;
 
-    // 5. Trigger Realtime Update
     await supabaseAdmin
-        .from('games')
-        .update({ updated_at: new Date().toISOString() })
-        .eq('id', gameId);
+      .from('games')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', gameId);
 
     return new Response(
       JSON.stringify({ success: true, settings: gameState.settings }),
@@ -75,4 +75,8 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
     )
   }
-})
+};
+
+if (import.meta.main) {
+  Deno.serve(handler);
+}

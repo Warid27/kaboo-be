@@ -8,31 +8,33 @@ import { handler as leaveGameHandler } from "../leave-game/index.ts";
 import { handler as endGameHandler } from "../end-game/index.ts";
 import { handler as startGameHandler } from "../start-game/index.ts";
 import { handler as toggleReadyHandler } from "../toggle-ready/index.ts";
-
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+import {
+  SUPABASE_SERVICE_ROLE_KEY,
+  SUPABASE_URL,
+  hasServiceRoleKey,
+  hasSupabaseEnv,
+  signInTestUser,
+} from "./testUtils.ts";
 
 Deno.test({
   name: "Backend E2E - Full Lifecycle (Create -> Join -> Leave -> End)",
   sanitizeOps: false,
   sanitizeResources: false,
+  ignore: !hasSupabaseEnv || !hasServiceRoleKey,
   async fn() {
-    // 1. Sign in two users
-  const { data: hostData, error: hostAuthError } = await supabase.auth.signInAnonymously();
-  if (hostAuthError || !hostData.session || !hostData.user) throw hostAuthError || new Error("Host auth failed");
-  const hostToken = hostData.session.access_token;
-  const hostId = hostData.user.id;
+    const hostAuth = await signInTestUser();
+    const guestAuth = await signInTestUser();
+    const hostToken = hostAuth.token;
+    const hostId = hostAuth.userId;
+    const guestToken = guestAuth.token;
 
-  const { data: guestData, error: guestAuthError } = await supabase.auth.signInAnonymously();
-  if (guestAuthError || !guestData.session || !guestData.user) throw guestAuthError || new Error("Guest auth failed");
-  const guestToken = guestData.session.access_token;
-  // deno-lint-ignore no-unused-vars
-  const guestId = guestData.user.id;
+    const supabaseAdmin = createClient(
+      SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY!,
+    );
 
-  let gameId = "";
-  let roomCode = "";
+    let gameId = "";
+    let roomCode = "";
 
   try {
     // 2. Create Game (Host)
@@ -66,12 +68,15 @@ Deno.test({
     });
     const joinRes = await joinGameHandler(joinReq);
     assertEquals(joinRes.status, 200);
+    const joinBody = await joinRes.json();
+    assertEquals(joinBody.gameId, gameId);
 
     // 4. Verify both players are in the game
-    const { data: playersBefore } = await supabase
+    const { data: playersBefore } = await supabaseAdmin
       .from("game_players")
       .select("user_id")
       .eq("game_id", gameId);
+    console.log("Full Lifecycle - playersBefore", playersBefore);
     assertEquals(playersBefore?.length, 2);
 
     // 4.5. Start Game (Host)
@@ -120,7 +125,7 @@ Deno.test({
     assertEquals(leaveBody.success, true);
 
     // 6. Verify Guest is removed
-    const { data: playersAfterLeave } = await supabase
+    const { data: playersAfterLeave } = await supabaseAdmin
       .from("game_players")
       .select("user_id")
       .eq("game_id", gameId);
@@ -142,7 +147,7 @@ Deno.test({
     assertEquals(endBody.success, true);
 
     // 8. Verify Game is deleted
-    const { data: gameAfterEnd } = await supabase
+    const { data: gameAfterEnd } = await supabaseAdmin
       .from("games")
       .select("id")
       .eq("id", gameId)
@@ -152,12 +157,12 @@ Deno.test({
   } finally {
     // Cleanup if something failed
     if (gameId) {
-      const supabaseAdmin = createClient(
-        SUPABASE_URL,
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-      );
       await supabaseAdmin.from("games").delete().eq("id", gameId);
     }
   }
   }
 });
+
+
+
+// Remaining tests here focus on RLS and error handling

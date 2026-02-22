@@ -4,7 +4,7 @@ import { corsHeaders } from "../_shared/cors.ts"
 
 console.log("Kick Player Function Loaded");
 
-Deno.serve(async (req) => {
+export const handler = async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
@@ -18,21 +18,20 @@ Deno.serve(async (req) => {
       )
     }
 
-    // Parse Body
     let gameId: string;
     let playerIdToKick: string;
     try {
-        const text = await req.text();
-        if (!text) throw new Error('Empty request body');
-        const body = JSON.parse(text);
-        gameId = body.gameId;
-        playerIdToKick = body.playerId;
-    } catch (e) {
-        throw new Error('Invalid request body');
+      const text = await req.text();
+      if (!text) throw new Error('Empty request body');
+      const body = JSON.parse(text);
+      gameId = body.gameId;
+      playerIdToKick = body.playerId;
+    } catch (_) {
+      throw new Error('Invalid request body');
     }
 
-    if (!gameId) throw new Error('Game ID required')
-    if (!playerIdToKick) throw new Error('Player ID to kick required')
+    if (!gameId) throw new Error('Game ID required');
+    if (!playerIdToKick) throw new Error('Player ID to kick required');
 
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -48,72 +47,61 @@ Deno.serve(async (req) => {
       )
     }
 
-    // Find Game and verify host
     const { data: game, error: gameError } = await supabaseAdmin
       .from('games')
       .select('id, status, created_by')
       .eq('id', gameId)
-      .single()
+      .single();
 
-    if (gameError || !game) throw new Error('Game not found')
-    
-    // Only host can kick
+    if (gameError || !game) throw new Error('Game not found');
+
     if (game.created_by !== user.id) {
-        throw new Error('Only the host can kick players')
+      throw new Error('Only the host can kick players');
     }
 
-    // Cannot kick yourself (use leave-game instead)
     if (playerIdToKick === user.id) {
-        throw new Error('You cannot kick yourself. Use leave game instead.')
+      throw new Error('You cannot kick yourself. Use leave game instead.');
     }
 
-    // Handle based on status
-    // For now, only allow kicking in 'waiting' status (lobby)
     if (game.status !== 'waiting') {
-        throw new Error('Can only kick players in the lobby')
+      throw new Error('Can only kick players in the lobby');
     }
 
-    // Remove player from game_players
     const { error: deletePlayerError } = await supabaseAdmin
-        .from('game_players')
-        .delete()
-        .eq('game_id', gameId)
-        .eq('user_id', playerIdToKick);
+      .from('game_players')
+      .delete()
+      .eq('game_id', gameId)
+      .eq('user_id', playerIdToKick);
 
     if (deletePlayerError) throw deletePlayerError;
 
-    // Update game_secrets
     const { data: secretData } = await supabaseAdmin
-        .from('game_secrets')
-        .select('game_state')
-        .eq('game_id', gameId)
-        .single();
+      .from('game_secrets')
+      .select('game_state')
+      .eq('game_id', gameId)
+      .single();
 
     if (secretData && secretData.game_state) {
-        const gameState = secretData.game_state;
-        
-        // Remove from players
-        if (gameState.players && gameState.players[playerIdToKick]) {
-            delete gameState.players[playerIdToKick];
-        }
-        
-        // Remove from playerOrder
-        if (gameState.playerOrder) {
-            gameState.playerOrder = gameState.playerOrder.filter((id: string) => id !== playerIdToKick);
-        }
+      const gameState = secretData.game_state;
 
-        // Save back
-        await supabaseAdmin
-            .from('game_secrets')
-            .update({ game_state: gameState })
-            .eq('game_id', gameId);
+      if (gameState.players && gameState.players[playerIdToKick]) {
+        delete gameState.players[playerIdToKick];
+      }
+
+      if (gameState.playerOrder) {
+        gameState.playerOrder = gameState.playerOrder.filter((id: string) => id !== playerIdToKick);
+      }
+
+      await supabaseAdmin
+        .from('game_secrets')
+        .update({ game_state: gameState })
+        .eq('game_id', gameId);
     }
 
-    // Touch games table to trigger subscription update for all players
     await supabaseAdmin
-        .from('games')
-        .update({ updated_at: new Date().toISOString() })
-        .eq('id', gameId);
+      .from('games')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', gameId);
 
     return new Response(
       JSON.stringify({ success: true, kickedPlayerId: playerIdToKick }),
@@ -127,4 +115,9 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
     )
   }
-})
+};
+
+if (import.meta.main) {
+  Deno.serve(handler);
+}
+

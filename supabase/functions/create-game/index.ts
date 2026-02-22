@@ -63,7 +63,7 @@ export const handler = async (req: Request): Promise<Response> => {
     
     if (!profile) {
         console.log("Profile missing, creating default profile for:", user.id);
-        const username = reqPlayerName !== 'Host' ? reqPlayerName : (user.email?.split('@')[0] || `Player_${Math.random().toString(36).substring(2, 6)}`);
+        const username = user.email?.split('@')[0] || `Player_${Math.random().toString(36).substring(2, 6)}`;
         
         // Use Admin client to create profile for anonymous users to bypass potential RLS issues
         const { data: newProfile, error: profileError } = await supabaseAdmin

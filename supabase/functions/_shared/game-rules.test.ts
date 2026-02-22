@@ -1,6 +1,6 @@
 // deno-lint-ignore-file no-import-prefix
-import { assertEquals } from "https://deno.land/std@0.208.0/assert/mod.ts";
-import { createDeck, initializeGame, drawFromDeck, discardDrawnCard, swapWithOwn, callKaboo, getCardValue, resolveEffect, snapCard, sanitizeState } from "./game-rules.ts";
+import { assertEquals, assertThrows } from "https://deno.land/std@0.208.0/assert/mod.ts";
+import { createDeck, initializeGame, drawFromDeck, discardDrawnCard, swapWithOwn, callKaboo, getCardValue, resolveEffect, snapCard, sanitizeState, drawFromDiscard, handleReadyToPlay, processMove } from "./game-rules.ts";
 
 const mockSettings = {
   turnTimer: '30',
@@ -47,12 +47,15 @@ Deno.test("Turn Flow - Swap", () => {
   const players = ["p1", "p2"];
   let game = initializeGame(players, "TEST", mockSettings);
   game.currentTurnUserId = "p1";
+  game.turnPhase = "draw";
   
   game = drawFromDeck(game, "p1");
   const drawnCard = game.drawnCard!;
   
   const oldHandCard = game.players["p1"].cards[0];
+  game.players["p1"].cards[0].rank = "3";
   
+  game.turnPhase = "action";
   game = swapWithOwn(game, "p1", 0);
   
   assertEquals(game.players["p1"].cards[0].id, drawnCard.id);
@@ -187,4 +190,158 @@ Deno.test("State Sanitization - Masking Drawn Card", () => {
     assertEquals(p2State.drawnCard?.rank, 'A');
     assertEquals(p2State.drawnCard?.suit, 'hearts');
     assertEquals(p2State.drawnCard?.faceUp, false);
+});
+
+Deno.test("READY_TO_PLAY invalid phases and player", () => {
+    const players = ["p1", "p2"];
+    let game = initializeGame(players, "TEST", mockSettings);
+    game.phase = "playing";
+    assertThrows(() => {
+        handleReadyToPlay(game, "p1");
+    }, Error, "Not in initial_look phase");
+
+    game = initializeGame(players, "TEST", mockSettings);
+    assertThrows(() => {
+        handleReadyToPlay(game, "unknown");
+    }, Error, "Player not found");
+});
+
+Deno.test("READY_TO_PLAY transitions to playing when all ready", () => {
+    const players = ["p1", "p2"];
+    let game = initializeGame(players, "TEST", mockSettings);
+
+    game = handleReadyToPlay(game, "p1");
+    assertEquals(game.phase, "initial_look");
+
+    game = handleReadyToPlay(game, "p2");
+    assertEquals(game.phase, "playing");
+    assertEquals(game.turnPhase, "draw");
+});
+
+Deno.test("DRAW_FROM_DECK invalid cases", () => {
+    const players = ["p1", "p2"];
+    let game = initializeGame(players, "TEST", mockSettings);
+    game.currentTurnUserId = "p1";
+
+    game.turnPhase = "action";
+    assertThrows(() => {
+        drawFromDeck(game, "p1");
+    }, Error, "Cannot draw in this phase");
+
+    game = initializeGame(players, "TEST", mockSettings);
+    game.currentTurnUserId = "p1";
+    assertThrows(() => {
+        drawFromDeck(game, "p2");
+    }, Error, "Not your turn");
+});
+
+Deno.test("DRAW_FROM_DECK empty deck triggers auto Kaboo and scoring", () => {
+    const players = ["p1", "p2"];
+    let game = initializeGame(players, "TEST", mockSettings);
+    game.currentTurnUserId = "p1";
+    game.deck = [];
+
+    game = drawFromDeck(game, "p1");
+    assertEquals(game.kabooCallerId, "SYSTEM");
+    assertEquals(game.phase, "scoring");
+});
+
+Deno.test("DRAW_FROM_DISCARD happy and invalid paths", () => {
+    const players = ["p1", "p2"];
+    let game = initializeGame(players, "TEST", mockSettings);
+    game.currentTurnUserId = "p1";
+
+    game.discardPile = [];
+    assertThrows(() => {
+        drawFromDiscard(game, "p1");
+    }, Error, "Discard pile empty");
+
+    game = initializeGame(players, "TEST", mockSettings);
+    game.currentTurnUserId = "p1";
+    const top = game.discardPile[game.discardPile.length - 1];
+    game.turnPhase = "draw";
+    game = drawFromDiscard(game, "p1");
+    assertEquals(game.drawnCard?.id, top.id);
+    assertEquals(game.turnPhase, "action");
+});
+
+Deno.test("SWAP_WITH_OWN invalid cases", () => {
+    const players = ["p1", "p2"];
+    let game = initializeGame(players, "TEST", mockSettings);
+    game.currentTurnUserId = "p1";
+    game.turnPhase = "action";
+
+    assertThrows(() => {
+        swapWithOwn(game, "p1", 0);
+    }, Error, "No card drawn");
+
+    game.turnPhase = "draw";
+    game = drawFromDeck(game, "p1");
+    game.turnPhase = "action";
+    assertThrows(() => {
+        swapWithOwn(game, "p1", -1);
+    }, Error, "Invalid card index");
+});
+
+Deno.test("DISCARD_DRAWN invalid cases", () => {
+    const players = ["p1", "p2"];
+    let game = initializeGame(players, "TEST", mockSettings);
+    game.currentTurnUserId = "p1";
+    game.turnPhase = "action";
+
+    assertThrows(() => {
+        discardDrawnCard(game, "p1");
+    }, Error, "No card drawn");
+
+    game.turnPhase = "draw";
+    game = drawFromDeck(game, "p1");
+    game.turnPhase = "draw";
+    assertThrows(() => {
+        discardDrawnCard(game, "p1");
+    }, Error, "Invalid phase");
+});
+
+Deno.test("SNAP failure penalties and no-penalty when deck empty", () => {
+    const players = ["p1", "p2"];
+    let game = initializeGame(players, "TEST", mockSettings);
+
+    game.discardPile = [{ id: "d1", rank: "5", suit: "hearts", value: 5, faceUp: true }];
+    const original = { id: "c1", rank: "9", suit: "spades", value: 9, faceUp: false } as const;
+    game.players["p1"].cards[0] = original;
+
+    const deckSize = game.deck.length;
+    game = snapCard(game, "p1", 0);
+    assertEquals(game.players["p1"].cards.length, game.players["p1"].cards.length);
+    assertEquals(game.deck.length, deckSize - 1);
+
+    game.deck = [];
+    game.discardPile = [{ id: "d2", rank: "3", suit: "clubs", value: 3, faceUp: true }];
+    game.players["p1"].cards[0] = { id: "c2", rank: "4", suit: "clubs", value: 4, faceUp: false } as const;
+    game = snapCard(game, "p1", 0);
+    assertEquals(game.deck.length, 0);
+});
+
+Deno.test("CALL_KABOO invalid cases", () => {
+    const players = ["p1", "p2"];
+    let game = initializeGame(players, "TEST", mockSettings);
+    game.currentTurnUserId = "p1";
+
+    game.turnPhase = "action";
+    assertThrows(() => {
+        callKaboo(game, "p1");
+    }, Error, "Cannot call Kaboo after drawing");
+
+    game = initializeGame(players, "TEST", mockSettings);
+    game.currentTurnUserId = "p1";
+    assertThrows(() => {
+        callKaboo(game, "p2");
+    }, Error, "Not your turn");
+
+    game = initializeGame(players, "TEST", mockSettings);
+    game.currentTurnUserId = "p1";
+    game = callKaboo(game, "p1");
+    game.currentTurnUserId = "p1";
+    assertThrows(() => {
+        callKaboo(game, "p1");
+    }, Error, "Kaboo already called");
 });
